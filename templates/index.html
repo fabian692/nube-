@@ -1,0 +1,255 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nube Flask - Subida, Descarga y Eliminación</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .file-list {
+            margin-top: 20px;
+        }
+        .file-list ul {
+            list-style: none;
+            padding: 0;
+        }
+        .file-list li {
+            margin: 10px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .file-list a {
+            color: #007bff;
+            text-decoration: none;
+        }
+        .file-list a:hover {
+            text-decoration: underline;
+        }
+        .delete-btn {
+            background-color: #dc3545;
+            padding: 5px 10px;
+            font-size: 14px;
+        }
+        .delete-btn:hover {
+            background-color: #c82333;
+        }
+        progress {
+            width: 100%;
+            height: 20px;
+            margin-top: 10px;
+        }
+        #progressText {
+            margin-top: 5px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Nube Fabian Ramirez</h1>
+        <form id="uploadForm" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="file">Seleccionar archivo:</label>
+                <input type="file" id="file" name="file" required>
+            </div>
+            <button type="submit">Subir Archivo</button>
+        </form>
+        <progress id="progressBar" value="0" max="100" style="display: none;"></progress>
+        <div id="progressText" style="display: none;"></div>
+        <div id="response"></div>
+        
+        <div class="file-list">
+            <h2>Archivos Disponibles</h2>
+            {% if files %}
+                <ul>
+                {% for file in files %}
+                    <li>
+                        <a href="/download/{{ file }}" download>{{ file }}</a>
+                        <button class="delete-btn" onclick="deleteFile('{{ file }}')">Eliminar</button>
+                    </li>
+                {% endfor %}
+                </ul>
+            {% else %}
+                <p>No hay archivos disponibles.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        // Manejar subida de archivos
+        document.getElementById('uploadForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            const form = e.target;
+            const formData = new FormData(form);
+            const responseDiv = document.getElementById('response');
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            
+            // Mostrar barra de progreso
+            progressBar.style.display = 'block';
+            progressText.style.display = 'block';
+            progressBar.value = 0;
+            progressText.textContent = 'Iniciando subida...';
+            
+            const xhr = new XMLHttpRequest();
+            
+            // Actualizar progreso
+            xhr.upload.addEventListener('progress', (event) => {
+                if (event.lengthComputable) {
+                    const percentComplete = (event.loaded / event.total) * 100;
+                    progressBar.value = percentComplete;
+                    progressText.textContent = `Subiendo: ${percentComplete.toFixed(2)}%`;
+                }
+            });
+            
+            // Manejar respuesta
+            xhr.onload = () => {
+                progressBar.style.display = 'none';
+                progressText.style.display = 'none';
+                
+                if (xhr.status === 200) {
+                    const data = JSON.parse(xhr.responseText);
+                    responseDiv.innerHTML = `
+                        <p style="color: green;">
+                            ¡Éxito! Archivo ${data.filename} subido correctamente.
+                        </p>`;
+                    // Recargar la página para actualizar la lista de archivos
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    const data = JSON.parse(xhr.responseText);
+                    responseDiv.innerHTML = `
+                        <p style="color: red;">
+                            Error: ${data.error}
+                        </p>`;
+                }
+            };
+            
+            // Manejar errores
+            xhr.onerror = () => {
+                progressBar.style.display = 'none';
+                progressText.style.display = 'none';
+                responseDiv.innerHTML = `
+                    <p style="color: red;">
+                        Error de conexión con el servidor
+                    </p>`;
+            };
+            
+            // Enviar solicitud
+            xhr.open('POST', '/upload', true);
+            xhr.send(formData);
+        });
+
+        // Función para eliminar archivos
+        function deleteFile(filename) {
+            if (!confirm(`¿Estás seguro de que deseas eliminar "${filename}"?`)) {
+                return;
+            }
+            
+            const responseDiv = document.getElementById('response');
+            
+            fetch(`/delete/${encodeURIComponent(filename)}`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    responseDiv.innerHTML = `
+                        <p style="color: green;">
+                            ${data.message}
+                        </p>`;
+                    // Recargar la página para actualizar la lista de archivos
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    responseDiv.innerHTML = `
+                        <p style="color: red;">
+                            Error: ${data.error}
+                        </p>`;
+                }
+            })
+            .catch(error => {
+                responseDiv.innerHTML = `
+                    <p style="color: red;">
+                        Error de conexión con el servidor
+                    </p>`;
+            });
+        }
+    </script>
+</body>
+</html>
